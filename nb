@@ -1,0 +1,137 @@
+-- Roblox 手机版子弹追踪脚本（队伍识别+准星可调+范围圈）
+-- 适配Arceus X/Fluxus Mobile等手机注入器
+-- 触屏点击即射击，自动过滤队友，参数全自定义
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- ===================== 手机端专属配置（可直接修改）=====================
+local Config = {
+    -- 战斗核心参数
+    Damage = 30,               -- 子弹伤害
+    BulletSpeed = 1200,        -- 子弹速度（越大追踪越灵敏）
+    TrackingRange = 500,       -- 最大追踪距离
+    FireRate = 0.15,           -- 射击间隔（秒，越小射速越快）
+    TeamCheck = true,          -- 开启队伍识别（true=不打队友）
+    -- 可视化参数
+    RangeCircleSize = 500,     -- 追踪范围圈大小（和TrackingRange一致即可）
+    RangeCircleColor = Color3.new(1, 0, 0), -- 范围圈颜色（红）
+    RangeCircleTransparency = 0.8, -- 范围圈透明度（0-1）
+    -- 准星参数
+    CrosshairSize = 20,        -- 准星大小（手机屏建议15-30）
+    CrosshairThickness = 3,    -- 准星粗细（手机屏建议2-5）
+    CrosshairColor = Color3.new(0, 1, 0), -- 准星颜色（绿）
+    CrosshairTransparency = 0  -- 准星透明度
+}
+
+-- 全局变量
+local CurrentTarget = nil
+local IsShooting = false
+local RangeCircle = nil
+local Crosshair = nil
+local LastFireTime = 0
+
+-- ===================== 初始化可视化（准星+范围圈）=====================
+-- 创建追踪范围圈
+local function CreateRangeCircle()
+    if RangeCircle then RangeCircle:Destroy() end
+    local Circle = Instance.new("Part")
+    Circle.Name = "TrackingRangeCircle"
+    Circle.Shape = Enum.PartType.Cylinder
+    Circle.Size = Vector3.new(Config.RangeCircleSize, 0.2, Config.RangeCircleSize)
+    Circle.BrickColor = BrickColor.new(Color3.toHSV(Config.RangeCircleColor))
+    Circle.Transparency = Config.RangeCircleTransparency
+    Circle.CanCollide = false
+    Circle.Anchored = true
+    Circle.CanTouch = false
+    Circle.CFrame = CFrame.new(Vector3.new(0, -100, 0))
+    Circle.Parent = Workspace
+    RangeCircle = Circle
+end
+
+-- 创建手机准星（屏幕中心）
+local function CreateCrosshair()
+    if Crosshair then Crosshair:Destroy() end
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Parent = LocalPlayer.PlayerGui
+
+    -- 准星横竖线
+    local function CreateLine(isHorizontal)
+        local Line = Instance.new("Frame")
+        Line.Size = UDim2.new(
+            isHorizontal and UDim.new(0, Config.CrosshairSize) or UDim.new(0, Config.CrosshairThickness),
+            isHorizontal and UDim.new(0, Config.CrosshairThickness) or UDim.new(0, Config.CrosshairSize)
+        )
+        Line.Position = UDim2.new(0.5, -Config.CrosshairSize/2, 0.5, -Config.CrosshairSize/2)
+        Line.BackgroundColor3 = Config.CrosshairColor
+        Line.BackgroundTransparency = Config.CrosshairTransparency
+        Line.BorderSizePixel = 0
+        Line.Parent = ScreenGui
+        return Line
+    end
+
+    CreateLine(true)  -- 横线
+    CreateLine(false) -- 竖线
+    Crosshair = ScreenGui
+end
+
+-- ===================== 核心功能（队伍识别+锁敌）=====================
+-- 队伍判断：是否为敌方
+local function IsEnemy(player)
+    if not Config.TeamCheck then return true end
+    if not LocalPlayer.Team or not player.Team then return true end
+    return LocalPlayer.Team ~= player.Team
+end
+
+-- 寻找最近敌方目标（过滤队友）
+local function FindClosestTarget()
+    local ClosestTarget = nil
+    local MinDistance = math.huge
+    local Character = LocalPlayer.Character
+    if not Character or not Character:FindFirstChild("HumanoidRootPart") then return nil end
+    local LocalRoot = Character.HumanoidRootPart
+
+    -- 同步范围圈位置到玩家
+    if RangeCircle then
+        RangeCircle.CFrame = CFrame.new(LocalRoot.Position + Vector3.new(0, 0.1, 0))
+    end
+
+    for _, Player in ipairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer and IsEnemy(Player) and Player.Character then
+            local TargetChar = Player.Character
+            local TargetRoot = TargetChar:FindFirstChild("HumanoidRootPart")
+            local TargetHumanoid = TargetChar:FindFirstChildOfClass("Humanoid")
+            if TargetRoot and TargetHumanoid and TargetHumanoid.Health > 0 then
+                local Distance = (TargetRoot.Position - LocalRoot.Position).Magnitude
+                if Distance < MinDistance and Distance <= Config.TrackingRange then
+                    MinDistance = Distance
+                    ClosestTarget = TargetRoot
+                end
+            end
+        end
+    end
+    return ClosestTarget
+end
+
+-- ===================== 子弹生成+追踪=====================
+local function SpawnHomingBullet(StartPos, Target)
+    if not Target then return end
+    local Bullet = Instance.new("Part")
+    Bullet.Name = "MobileHomingBullet"
+    Bullet.Size = Vector3.new(0.3, 0.3, 0.3)
+    Bullet.Position = StartPos
+    Bullet.BrickColor = BrickColor.new("BrightRed")
+    Bullet.CanCollide = false
+    Bullet.Anchored = false
+    Bullet.Parent = Workspace
+    Bullet:SetNetworkOwner(nil)
+
+    local Connection
+    Connection = RunService.Heartbeat:Connect(function(dt)
+        if not Bullet or not Target or not Target.Parent then
+            Bull
